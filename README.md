@@ -15,15 +15,47 @@ PolyMeasures have three main components
 The function evaluate returns a SQL statement, which will be syntactically valid only subject to
 sensible construction of the "PolyMeasure Tree".
 This evaluation may occur inside the evaluation contexts of other PolyMeasures, so that SQL expressions are
-built up recursively to achieve some complex calculation.
+built up recursively to achieve more complex calculations.
 
-## How it works
-
-In the following notation we drop the name parameter and write
+In the documentation we drop the name parameter and write
 
 `M( Outer * Dim; Inner: Where, Context )`
 
 when describing a PolyMeasure, in line with the order of the other parameters of importance.
+
+## How it works in a nutshell
+
+In pseudo-sql, `M( Inner * Dim; Outer; Where, Context )` evaluates as:
+
+```
+  with __VIEW__ as ( [select [Inner] from view([Inner])] )
+  
+  select [(
+      select [Outer] from (view(Outer) OR __VIEW__) dynamic_view
+      where dynamic_view.dim(Outer) = __VIEW__.dim(Outer)
+  )], Dim
+  
+  from __VIEW__
+  where Where
+  group by Dim
+  <<context>>
+```
+
+There is a simpler presentation when Dim = Rowset(G):
+
+```
+  with __VIEW__ as ( [select [Inner] from view([Inner])] )
+  
+  select [Outer], __VIEW__.G
+  
+  from __VIEW__
+  where Where
+  <<context>>
+```
+
+## How it works
+
+
 The context can be parameters like having or order by clauses.
 The where parameter specifies additional filters to apply to the
 
@@ -38,11 +70,12 @@ view in the schema. This allows a single PolyMeasure object to perform a double 
 view, where we group once, then group the resulting rowset again and perform some aggregation.
 
 If a free measure is supplied to the outer measure list, it will query the corresponding inner measure list.
-Free measures cannot be supplied as the inner measure of a PolyMeasure.
+Free measures should not be supplied as the inner measure of a PolyMeasure, unless the outer measures can supply
+their own inner bindings.
 
 Bound measures should have a default string value for the view, appropriate to the schema.
 Using the supplied factory method BoundedMeasure will return a super-classed PolyMeasure
-keyed to any views required.
+keyed to a specific view, for convenience.
 
 In the following examples, we assume one unique bounded measure exists,
 B = B(dim=Rowset(), inner=main_view), which acts as the ultimate "leaf" measure.
@@ -94,34 +127,3 @@ In summary:
 =    B( Outer * Dim; Inner: Where)
 ```
 all hold. (Note: Inner=None implicitly in the expression F( Outer * Dim; Inner: Where))
-
-==========================================
-
-In pseudo-sql M( Inner * Dim; Outer; Where, Context ) evaluates as:
-
-with __VIEW__ as ( [select [Inner] from view([Inner])] )
-
-select [(
-    select [Outer] from (view(Outer) OR __VIEW__) dynamic_view
-    where dynamic_view.dim(Outer) = __VIEW__.dim(Outer)
-)], Dim
-
-from __VIEW__
-where Where
-group by Dim
-<<context>>
-
-There is a simpler presentation when Dim = Rowset(G):
-
-with __VIEW__ as ( [select [Inner] from view([Inner])] )
-
-select [Outer], __VIEW__.G
-
-from __VIEW__
-where Where
-<<context>>
-
-==========================================
-
-Every outer measure needs to have dimensions that match the inner
-query. Use aliases or the rename function to achieve this.
