@@ -12,10 +12,7 @@ PolyMeasures have three main components
 - a set of outer PolyMeasures to evaluate over that view, and
 - a set of dimensions to group the inner view by when evaluating the outer view(s).
 
-The function evaluate returns a SQL statement, which will be syntactically valid only subject to
-sensible construction of the "PolyMeasure Tree".
-This evaluation may occur inside the evaluation contexts of other PolyMeasures, so that SQL expressions are
-built up recursively to achieve more complex calculations.
+The function `evaluate()` returns a SQL statement, built recursively from those components.
 
 In the documentation we drop the name parameter and write
 
@@ -98,14 +95,6 @@ to the dimensions of the enclosing measure after dimension promotion.
 The view and where parameters are applied to the inner query, Inner * Dim.
 For example if you want to apply a filter context to Outer directly (which is the final output aggregation),
 use M( Inner * Dim; F(Outer: Where_Outer): View, Where)
-
-Here are the things you can build with a single PolyMeasure
-
-1) M( Outer ) - Outer measure with no specified dimension - will take on the dimension of the enclosing measure.
-2) M( * Dim ) - A summary table of the dimensions Dim.
-3) M( Outer * Dim ) - A summary table of the dimensions with Outer measures calculated over each group.
-4) M( ; Inner ) - Defaults to M( Inner )
-5) M( Outer * Dim ; Inner ) - A set of aggregated calculations (Outer) grouped by Dim over Inner.
 
 ==========================================
 
