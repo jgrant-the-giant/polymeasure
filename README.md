@@ -13,8 +13,11 @@ PolyMeasures have three main components
 - a set of dimensions to group the inner view by when evaluating the outer view(s).
 
 The function `evaluate()` returns a SQL statement, built recursively from those components.
+Filtering clauses like where and having can be supplied as arguments to the PolyMeasure or evaluate() call.
+Where clauses are abstract python `FilterExpression` objects that can be given dynamic behaviours 
+depending on evaluation context.
 
-In the documentation we drop the name parameter and write
+In this documentation we drop the name parameter and write
 
 `M( Outer * Dim; Inner: Where, Context )`
 
@@ -53,9 +56,6 @@ There is a simpler presentation when Dim = Rowset(G):
 ## How it works
 
 
-The context can be parameters like having or order by clauses.
-The where parameter specifies additional filters to apply to the
-
 There are two classes of PolyMeasures - those with a free view, where Outer = None, or a bound view
 which already exists in the database.
 A bound measure with the usual arguments will be denoted `B( Inner * Dim; Outer: Where )`
@@ -64,14 +64,14 @@ and a free measure denoted `F( Inner * Dim; Outer: Where )`. Free views become h
 
 Free measures take on the context of the inner query in a PolyMeasure, rather than referencing a basic
 view in the schema. This allows a single PolyMeasure object to perform a double aggregation over a given
-view, where we group once, then group the resulting rowset again and perform some aggregation.
+view, where we group once, then group the resulting row set again and perform some aggregation.
 
 If a free measure is supplied to the outer measure list, it will query the corresponding inner measure list.
 Free measures should not be supplied as the inner measure of a PolyMeasure, unless the outer measures can supply
 their own inner bindings.
 
 Bound measures should have a default string value for the view, appropriate to the schema.
-Using the supplied factory method BoundedMeasure will return a super-classed PolyMeasure
+Using the supplied factory method bound_objects will return a super-classed PolyMeasure and FilterExpression objects
 keyed to a specific view, for convenience.
 
 In the following examples, we assume one unique bounded measure exists,
@@ -85,12 +85,12 @@ No attempt is made to reconcile the dimensions between inner and outer arguments
 a column that doesn't exist in dim(M) (the inner dimension specified by M), then the SQL parser
 will let you know :)
 
-When supplied as an argument, a tuple is interpreted as a "Dummy PolyMeasure" (name, inner, [dim]),
+When supplied as an argument, a tuple is interpreted as a "Dummy PolyMeasure" (name, outer, [dim]),
 where dim can be omitted. These measures are always free.
 
 When defining dimensions, [] means group by the whole table,
-RowSet means do not group the view. None is a wildcard, which means the measure will default
-to the dimensions of the enclosing measure after dimension promotion.
+RowSet means do not group the view at all. None is a wildcard, which means the measure will default
+to the dimensions of the enclosing measure after dimension promotion. None and [] will behave identically in most cases.
 
 The view and where parameters are applied to the inner query, Inner * Dim.
 For example if you want to apply a filter context to Outer directly (which is the final output aggregation),

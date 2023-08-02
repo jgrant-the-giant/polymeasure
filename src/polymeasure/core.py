@@ -728,7 +728,7 @@ class PolyMeasure:
 
         # null queries have well defined inner measures but they do not have a select statement from them..
         is_null_query = (wildcard_dimensions.dimensions is None and not wildcard_dimensions.rowset) and (
-                self.outer_dimension.wildcard and not self.outer_dimension.rowset)
+            self.outer_dimension.wildcard and not self.outer_dimension.rowset)
 
         # Treat this query as a source query, do not alias the final from statement
         evaluate_as_source = self._check_primitive(evaluate_inner) or is_null_query
@@ -901,33 +901,30 @@ class PolyMeasure:
             # else:
             #     use_alias = True
 
-            if measure.primitive:
+            if measure.primitive and (len(measure.outer) == 1) or not measure.source:
 
                 # The recursion now has a primitive measure which can be evaluated directly.
+                # Lock the passthrough wheres to the current original alias - this is the right place to do it
 
-                if len(measure.outer) == 1:
+                locked_where = [
+                    expression.fix_outer(original_alias) for expression in passthrough_where
+                ]
 
-                    # Lock the passthrough wheres to the current original alias - this is the right place to do it
-
-                    locked_where = [
-                        expression.fix_outer(original_alias) for expression in passthrough_where
-                    ]
-
-                    # if measure.free and measure.outer_dimension.wildcard and self.outer_dimension.rowset:
-                    if measure.free and wildcard_inner is None:
-                        # Generated when a rowset query doesn't need a subquery expression
-                        primitive_sql_list = primitive_sql_list + measure._get_primitive_expression(
-                            inner_alias=original_alias, override_name=override_name, update_columns=update_columns)
+                # if measure.free and measure.outer_dimension.wildcard and self.outer_dimension.rowset:
+                if measure.free and wildcard_inner is None:
+                    # Generated when a rowset query doesn't need a subquery expression
+                    primitive_sql_list = primitive_sql_list + measure._get_primitive_expression(
+                        inner_alias=original_alias, override_name=override_name, update_columns=update_columns)
+                else:
+                    if update_columns:
+                        alias_type = 'set'
                     else:
-                        if update_columns:
-                            alias_type = 'set'
-                        else:
-                            alias_type = None
-                        primitive_sql_list = primitive_sql_list + [measure._evaluate(
-                            locked_where, depth + 1, breadth, wildcard_inner,
-                            wildcard_dimensions, aliased=True, allow_grouping=False,
-                            override_name=override_name, update_columns=update_columns, alias_type=alias_type
-                        )]
+                        alias_type = None
+                    primitive_sql_list = primitive_sql_list + [measure._evaluate(
+                        locked_where, depth + 1, breadth, wildcard_inner,
+                        wildcard_dimensions, aliased=True, allow_grouping=False,
+                        override_name=override_name, update_columns=update_columns, alias_type=alias_type
+                    )]
 
 
             else:

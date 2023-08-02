@@ -7,10 +7,81 @@ count_rows = M('countrows', outer='count(*)')
 def constant(c):
     """
     Args:
-        c: Numeric or string literal.
+        c: Numeric or string literal, or object with str accessor.
     Returns: A polymeasure which always evaluates as c.
     """
-    return M('__a_constant', c, dim=[], suppress_from=True)
+    if not isinstance(c, str):
+        c = str(c)
+    return M('__a_constant', c, suppress_from=True)
+
+
+def combine_scalars(name, outer, inner_measures):
+    return M(name, outer, inner=M(outer=inner_measures))
+
+
+def dot_product(name, measures, weights=None):
+    """
+    Returns a polymeasure that represents the dot product of measures and weights.
+    https://en.wikipedia.org/wiki/Dot_product
+    :param name: Name of the measure
+    :param measures: A list of polymeasures [p1, p2 .. pN]
+    :param weights: A list of weights of equal length, [c1, c2 .. cN]
+    :return: Polymeasure representing the linear sum c1 * p1 + c2 * p2 + .. + cN * pN
+    """
+    measure_counts = len(measures)
+    if weights is not None:
+        if measure_counts != len(weights):
+            raise Exception
+        terms = [f"__input{i} * {weights[i]}" for i in range(measure_counts)]
+    else:
+        terms = [f"__input{i}" for i in range(measure_counts)]
+    linear_combination_expression = ' + \n'.join(terms)
+    return combine_scalars(name, linear_combination_expression, [
+        measures[i].rename(f"__input{i}") for i in range(measure_counts)
+    ])
+
+
+def exp_dot_product(name, measures, weights=None):
+    """
+    Returns a polymeasure that represents the product of the exponents of the measures by index weights.
+    Similar to a dot product, but exponentiate the terms and multiply them together.
+    :param name: Name of the measure
+    :param measures: A list of polymeasures [p1, p2 .. pN]
+    :param weights: A list of weights of equal length, [c1, c2 .. cN]
+    :return: Polymeasure representing the linear sum c1 ^ p1 * c2 ^ p2 * .. * cN ^ pN
+    """
+    measure_counts = len(measures)
+    if weights is not None:
+        if measure_counts != len(weights):
+            raise Exception
+        terms = [f"__input{i} ^ {weights[i]}" for i in range(measure_counts)]
+    else:
+        terms = [f"__input{i}" for i in range(measure_counts)]
+    linear_combination_expression = ' * \n'.join(terms)
+    return combine_scalars(name, linear_combination_expression, [
+        measures[i].rename(f"__input{i}") for i in range(measure_counts)
+    ])
+
+
+def kpi_dot_product(name, measures, weights):
+
+    measures_count = len(measures)
+
+    def values_clause(self, inner_alias):
+        values_terms = [f"({weights[i]}, (select __input{i} from {inner_alias}))" for i in range(measures_count)]
+        comma_newline = ', \n'
+        return f"""* from (values {comma_newline.join(values_terms)})"""
+
+    kpi_values_summary = M(
+        "kpis(weight, value)", values_clause,
+        inner=M(
+            outer=[measures[i].rename(f"__input{i}") for i in range(measures_count)])
+        ,
+        suppress_from=True)
+    kpi_polymeasure = M(
+        name, 'sum(weight * value) / sum(weight)',
+        inner=kpi_values_summary)
+    return kpi_polymeasure
 
 
 def string_column_sample(name, columns, inner, sample_size=5, sort_by=count_rows):
