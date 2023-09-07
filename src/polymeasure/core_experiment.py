@@ -80,7 +80,7 @@ class FilterExpression:
             auxiliary: List of auxiliary measures that also participate in the filter
         """
 
-        # Ensure that the expression is a function of one or more arguments
+        # Convert the expression to a function of one or more arguments
         if isinstance(expression, str):
             self.expression = lambda inner: expression
         elif isinstance(expression, FunctionType) or callable(expression):
@@ -127,10 +127,10 @@ class FilterExpression:
         if self.source is not None and source is not None and not source in self.source:
             return False
 
-        if len(self.lineage) == 0 and len(self.group_lineage) == 0:
+        if len(self.lineage) == 0:
             return True
 
-        for column in self.lineage + self.group_lineage:
+        for column in self.lineage:
             if column not in exclude and (column in include or include_all):
                 return True
 
@@ -244,9 +244,7 @@ class EvaluateContext:
         """
         :param input_where: List of FilterExpression objects being passed into the context
         :param prior_context: Optional connection to the previous evaluation context
-        """
 
-        """
     Collects the ViewContexts of a chain of inner measure evaluations, ending with a single primitive outer measure.
     The most general sequence of evaluations is, in pseudo-SQL:
 
@@ -276,33 +274,34 @@ class EvaluateContext:
 
     A few components are optional and or repeatable - auxiliary tables exist to provide filters to the target query, as
     do grouping tables, and these filter each other in sequence. There are special cases for evaluation when there is
-    no grouping or primitive stacks (but not both of these situations simultaneously.
+    no grouping or primitive stack but not both of these situations simultaneously.
     """
 
-        # The input primitive stack yields the following information:
+        # The prior context yields the following information:
         """
-        1) The incoming / existing where filters including potentially orphaned filters and dimensions
+        1) The incoming / existing where filters including free filters
         2) A hierarchy of sub queries and their corresponding EvaluateContexts
         """
 
         # Start with context containing only the incoming evaluation filters
-        # For record keeping
+        # For record keeping - the initial context
         self.input_where: List[FilterExpression] = input_where
-        self.where: List[FilterExpression] = input_where.copy()
+        # Actual list of filter expressions to be passed to other contexts on evaluation
+        self.where: List[FilterExpression] = []
 
         self.prior_context: Union[None, PolyMeasure] = prior_context
 
         # The context will process into one of two distinct types:
 
         # 1) a primitive context just containing a single primitive outer measure with no grouping
-        self.outer_primitive: Union[str, FunctionType] = None
+        self.outer_primitive: Union[None, str, FunctionType] = None
 
         # 2) a complex context containing zero or more outer contexts and zero or more dimensions
         self.outer_contexts: List[EvaluateContext] = []
         self.dim: Dimension = Dimension()
 
         # In both cases there are zero or more auxiliary contexts
-        self.auxiliary = []
+        self.auxiliary: List[EvaluateContext] = []
 
         # When dim exists you can apply outer where expressions
         self.outer_where: List[FilterExpression]
@@ -318,14 +317,10 @@ class EvaluateContext:
         self.postfix = None
 
 
-    def outgoing_filters(self):
-        current_primitive = self.get_current_primitive()
-        return current_primitive.current_filters()
-
 
     def evaluate(self, update_columns=False):
         """
-        Returns a SQL string for the entire context (orphan -> aux -> group -> aux -> target)
+        Returns a SQL string for the entire context (aux -> group + evaluations | primitive)
         :return: SQL String
         """
 
@@ -802,7 +797,9 @@ class PolyMeasure:
         # Filter incoming where expressions using self.include / exclude properties,
         # pass these to the new MeasureContext
 
-        new_context = MeasureContext(self, context)
+        filter_where = [
+
+        ]
 
         # Pass clones of this context to any auxiliary measures provided by the filters, and evaluate
         for expression in self.where:
