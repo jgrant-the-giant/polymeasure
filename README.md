@@ -5,6 +5,10 @@
 
 The current "release" can still do cool things but don't do anything practical with it just yet..
 
+> [!WARNING]
+> This documentation reflects future updates to the code that do not exist in core.py in this branch.
+> core_experiment.py is work in progress and the patient there is missing vital organs.
+
 ## A python analysis package for building SQL expressions
 
 A PolyMeasure (or measure) represents a SQL "group by one view, evaluate over another" statement, with options
@@ -30,7 +34,58 @@ In this documentation we drop the name parameter and write
 
 when describing a PolyMeasure, in line with the order of the other parameters of importance.
 
+## Why code this
+
+Partly because Malloy's marketing didn't reach me in time, and partly because I'm a fan of doing things myself, and writing SQL myself.
+PolyMeasures began as a wrapper class to help me filter views so that I could create user-driven analytical apps in Streamlit for the biz.
+
+As a PowerBI developer working in the DAX language I nurtured an appreciation for functionally-programmed metrics that can
+
+ - computer advanced, multi-aggregation-step analytics..
+ - over arbitrary user-defined filter contexts.
+
+What I did not enjoy was being severed from my code repository and my nice neat IDE, comments, version control, code hyperlinking linting and
+probably most of all, debugging. And Streamlit, Plotly and co. can produce astonishing visualisations (I like dense visuals), 
+inside bootstap-templated, gorgeous and mostly very responsive data applications (being very selective with the cross-filtering functionality).
+
+But performance is important and nested pandas transformations won't fly - even 100k rows will trip up a double (or single) call to pandas.apply() if the logic is heavy enough.
+
+So what I thought might be better is creating a shell python class (`PolyMeasure`) (or 2 or 5 or 3 or..) to stitch SQL together in a rudimentary way, with filter-like objects
+(`FilterExpression`) that will mimic the functionality of "context-control" that features so heavily in DAX. 
+Then the steps to build a report locally are 
+
+1. Draw a chunk of your precious business schema into parquets. Do this incrementally.
+2. Load this information into a DuckDB in-memory instance `connection`
+3. Write the analysis logic using the PolyMeasures, including building other views and calculated columns.
+   A single Polymeasure (say business_kpi_A_results) represents a table..
+5. Create an interface that allows the user to define filters over the columns in the view, which generates a list of FilterExpressions `user_filters`
+6. Graph or tabulate the results of:
+```
+connection.sql(
+  business_kpi_A_results.evaluate(
+    where=user_filters))
+```
+
+The PolyMeasure squashes the business kpi logic and filters down into SQL and results return lightning-fast.
+
 ## How it works in a nutshell
+
+In the simple case you start in Python with an SQL connection to a schema containing a single view or table named 'core'.
+Import some things and "bind" three helper objects to this view:
+
+```
+from polymeasure import PolyMeasure as M, FilterExpression, Rowset, bound_objects, standard
+MCore, LibCore, WCore = bound_objects('core')
+```
+
+The three objects are a measure object, a library of common measures and a filter object (all targeted to the named view, core)
+
+Here is a summary table
+
+> [!WARNING]
+> Work In Progress
+
+## How it works
 
 In pseudo-sql, `M( Inner * Dim; Outer; Where )` evaluates as:
 
@@ -57,9 +112,6 @@ There is a simpler presentation when Dim = Rowset(G):
   from __VIEW__
   where Where
 ```
-
-## How it works
-
 
 There are two classes of PolyMeasures - those with a free view, where Outer = None, or a bound view
 which already exists in the database.
