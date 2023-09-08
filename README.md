@@ -1,4 +1,10 @@
 # polymeasure
+
+> [!WARNING]
+> This repo is pre-alpha, I am currently refactoring the codebase so it isn't insane, and there are a few bugs for more complex cases that aren't going away until that's done :D
+
+The current "release" can still do cool things but don't do anything practical with it just yet..
+
 ## A python analysis package for building SQL expressions
 
 A PolyMeasure (or measure) represents a SQL "group by one view, evaluate over another" statement, with options
@@ -6,26 +12,27 @@ for supplying the usual SQL operators or modifying the evaluation in other progr
 The class provides a framework for creating analysis expressions over SQL database systems, in particular the
 duckdb SQL engine.
 
-PolyMeasures have three main components
+A PolyMeasure has four main components
 
-- an inner view, also a PolyMeasure
-- a set of outer PolyMeasures to evaluate over that view, and
-- a set of dimensions to group the inner view by when evaluating the outer view(s).
+- an inner SQL view, also a PolyMeasure
+- a list of outer PolyMeasures to evaluate over that view,
+- a list of dimensions to group the inner view by, and
+- a list of FilterExpression objects representing filters
 
-The function `evaluate()` returns a SQL statement, built recursively from those components.
-Filtering clauses like where and having can be supplied as arguments to the PolyMeasure or evaluate() call.
-Where clauses are abstract python `FilterExpression` objects that can be given dynamic behaviours 
-depending on evaluation context.
+The function `evaluate()` returns a SQL statement, built recursively from those components. Passing this SQL expression
+to a capable SQL engine allows the user to rapidly compute very complex calculations, for use in processing or visualisation.
+Post-aggregation options like order by.. and having.. can be supplied as arguments to the PolyMeasure or evaluate() call.
+Where clauses are created by abstract python `FilterExpression` objects that create other auxiliary views.
 
 In this documentation we drop the name parameter and write
 
-`M( Outer * Dim; Inner: Where, Context )`
+`M( Outer * Dim; Inner: Where )`
 
 when describing a PolyMeasure, in line with the order of the other parameters of importance.
 
 ## How it works in a nutshell
 
-In pseudo-sql, `M( Inner * Dim; Outer; Where, Context )` evaluates as:
+In pseudo-sql, `M( Inner * Dim; Outer; Where )` evaluates as:
 
 ```
   with __VIEW__ as ( [select [Inner] from view([Inner])] )
@@ -38,7 +45,6 @@ In pseudo-sql, `M( Inner * Dim; Outer; Where, Context )` evaluates as:
   from __VIEW__
   where Where
   group by Dim
-  <<context>>
 ```
 
 There is a simpler presentation when Dim = Rowset(G):
@@ -50,7 +56,6 @@ There is a simpler presentation when Dim = Rowset(G):
   
   from __VIEW__
   where Where
-  <<context>>
 ```
 
 ## How it works
