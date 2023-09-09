@@ -57,33 +57,71 @@ Then the steps to build a report locally are
 1. Draw a chunk of your precious business schema into parquets. Do this incrementally.
 2. Load this information into a DuckDB in-memory instance `connection`
 3. Write the analysis logic using the PolyMeasures, including building other views and calculated columns.
-   A single Polymeasure (say business_kpi_A_results) represents a table..
+   A single PolyMeasure (say org_kpi_A_results) may represent a table, which is a pivot whose values are other (outer) PolyMeasures
 5. Create an interface that allows the user to define filters over the columns in the view, which generates a list of FilterExpressions `user_filters`
-6. Graph or tabulate the results of:
+6. Graph, tabulate or transmit the results of:
 ```
 connection.sql(
-  business_kpi_A_results.evaluate(
+  org_kpi_A_results.evaluate(
     where=user_filters))
 ```
 
-The PolyMeasure squashes the business kpi logic and filters down into SQL and results return lightning-fast.
+The PolyMeasure folds the business kpi logic and filters into SQL for speedy evaluation (as any good analysis expression language should).
+
+What I discovered was that it worked very well even in prototype form, and that it allowed for some very powerful expressions, especially when leveraging DuckDB's analytics functions.
+I was soon able to replace more intricate, dataframe-based transformation pipelines with far more expressive PolyMeasures that were ultimately just very fancy wrappers around nested SQL queries. 
 
 ## How it works in a nutshell
 
-In the simple case you start in Python with an SQL connection to a schema containing a single view or table named 'core'.
+As a simple example, start in Python with an SQL connection `sqlcon` to a schema containing a single view or table named 'core'.
 Import some things and "bind" three helper objects to this view:
 
 ```
-from polymeasure import PolyMeasure as M, FilterExpression, Rowset, bound_objects, standard
+from polymeasure import PolyMeasure as M, FilterExpression, Rowset, bound_objects
 MCore, LibCore, WCore = bound_objects('core')
 ```
 
 The three objects are a measure object, a library of common measures and a filter object (all targeted to the named view, core)
 
-Here is a summary table
+Here is a summary table over some `dimensions`:
+
+```
+measure1 = MCore(dim=[dimensions])
+materialised_table1 = sqlcon.sql(table1.evaluate()).df()
+```
+
+With cardinality and a distinct count of "something"
+```
+measure2 = MCore(
+ outer=[LibCore.size, ("a_distinct_count_of_something", "count(distinct something)")],
+ dim=[dimensions]
+)
+materialised_table2 = sqlcon.sql(measure2.evaluate()).df()
+```
+
+A measure that returns the maximum distinct count of something over measure2:
+
+```
+measure3 = M(
+ 'max_distinct_something_over_dimensions'
+ outer='max(a_distinct_count_of_something)',
+ inner=measure2
+)
+```
+
+Finally, a measure that evaluates measure3 over a new grouping set `dimensions2`, after applying a filter on column_a:
+```
+measure4 = M(
+ outer=measure3,
+ dim=dimensions2,
+ where=WCore("column_a <> 'ignore_this_record'")
+)
+```
+
+For more detailed implementation examples (bu
 
 > [!WARNING]
-> Work In Progress
+> Work In Progress, some of the below is not relevant now..
 
 ## How it works
 
