@@ -26,13 +26,11 @@ A PolyMeasure has four main components
 The function `evaluate()` returns a SQL statement, built recursively from those components. Passing this SQL expression
 to a capable SQL engine allows the user to rapidly compute very complex calculations, for use in processing or visualisation.
 Post-aggregation options like order by.. and having.. can be supplied as arguments to the PolyMeasure or evaluate() call.
-Where clauses are created by abstract python `FilterExpression` objects that create other auxiliary views.
+Where clauses are created by abstract python `FilterExpression` objects that can also leverage their own subexpressions.
 
-In this documentation we drop the name parameter and write
+## Installation
 
-`M( Outer * Dim; Inner: Where )`
-
-when describing a PolyMeasure, in line with the order of the other parameters of importance.
+`python -m pip install polymeasure` with a dependency on sqlparse if you want to prettify the resulting SQL
 
 ## Why code this
 
@@ -66,7 +64,7 @@ connection.sql(
     where=user_filters))
 ```
 
-The PolyMeasure folds the business kpi logic and filters into SQL for speedy evaluation (as any good analysis expression language should).
+The PolyMeasure then folds the business kpi logic and filters into SQL in a naive but sufficiently performant way.
 
 What I discovered was that it worked very well even in prototype form, and that it allowed for some very powerful expressions, especially when leveraging DuckDB's analytics functions.
 I was soon able to replace more intricate, dataframe-based transformation pipelines with far more expressive PolyMeasures that were ultimately just very fancy wrappers around nested SQL queries. 
