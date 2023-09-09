@@ -4,13 +4,6 @@ from copy import copy
 import sqlparse
 
 
-def constant(value):
-    def func():
-        return value
-
-    return func
-
-
 def make_as_list(maybe_vector, filter_out_null=True, keep_none=False):
     if maybe_vector is None and not keep_none:
         maybe_null_vector = []
@@ -152,7 +145,7 @@ class Dimension:
     def __init__(self, dimensions=None, rowset=False, star=None):
         """
         Represents a set of dimensions to group an inner query.
-        Can be any granularity from [] to ∞, or None which defaults to the parent measures dimensions.
+        Can be any granularity from [] to infinity, or None which defaults to the parent measures dimensions.
         Args:
             groupby: list column names or None
             rowset: list column names or None
@@ -175,6 +168,9 @@ class Dimension:
             self.wildcard = True
         else:
             self.wildcard = False
+
+    def check_null(self):
+        return (self.dimensions is None or len(self.dimensions) == 0) and not self.rowset
 
     def absorb_new_dimension(self, new_dimension):
         # Absorb a new dimension and return the results as the union of their effects
@@ -384,7 +380,7 @@ class PolyMeasure:
             where=None, having=None, order_by=None, postfix=None,
             include=None, exclude=None, join_nulls=True,
             acquire_dimensions=False, redirect=None,
-            suppress_from=False
+            suppress_from=False, outer_where=None
     ):
         """
         Args:
@@ -564,7 +560,11 @@ class PolyMeasure:
         The function _to_polymeasure processes dummy measure entities into true PolyMeasure objects.
         _primitive indicates that _to_polymeasure isn't needed to interpret the field outer, which stops the recursion.
         In the primitive case outer is a string, or string a function which is passed parent and root as parameters
-        Primitives are always free measures
+        Primitives are always free measures.
+        
+        Every subquery evaluated is evaluated against a single primitive outer measure. This subquery defines and joins
+        any views that are built up along the way.
+        
         The outer_dimension is the final dimension set of the measure, which is determined recursively by both self.dim and the 
         outer_dimensions of the outer measures. This closure process forms a union of the dimensions, with Rowset being
         the most granular, and [] being the least. dim = None is a wildcard that assumes the dimension of the 
@@ -592,8 +592,8 @@ class PolyMeasure:
 
         # Create where FilterExpression objects (now that self.inner is defined)
         self.where = self._process_where_argument(where)
+        self.outer_where = self._process_where_argument(outer_where)
 
-        # Determine the outer dimension
 
         if self.primitive:
             self.outer = make_as_list(outer, filter_out_null=True)
@@ -603,13 +603,13 @@ class PolyMeasure:
             self.outer = [self._to_polymeasure(measure) for measure in make_as_list(outer)]
             self.outer_dimension = self.dim
 
-            if self.acquire_dimensions:
-                for measure in self.outer:
-                    # For each outer measure collect the dimensions as named
-                    # (the designer should ensure they are unique strings or duckdb will mangle)
-                    # All the objects involved in this step should involve Dimenion objects which can handle the None
-                    # and rowset silliness.
-                    self.outer_dimension = self.outer_dimension.absorb_new_dimension(measure.outer_dimension)
+        if self.acquire_dimensions:
+            for measure in self.outer:
+                # For each outer measure collect the dimensions as named
+                # (the designer should ensure they are unique strings or duckdb will mangle)
+                # All the objects involved in this step should involve Dimension objects which can handle the None
+                # and rowset silliness.
+                self.outer_dimension = self.outer_dimension.absorb_new_dimension(measure.outer_dimension)
 
         # This is quite rare - acquire the inner dimension if none was supplied from the left
         # (outer dimensions + self.dim)
@@ -627,6 +627,7 @@ class PolyMeasure:
                 Dimension(self.inner._get_final_columnset())
             )
 
+        # Determine the set of primitive outer expressions that contribute to the final column set
         self.final_outer_columns = self._get_primitive_sql_names()
 
         pass
@@ -700,6 +701,7 @@ class PolyMeasure:
 
         # evaluate_dimenions are the dimensional joins necessary at this level of the evaluation
         # The eventual where clauses are built in evaluate_where
+        # todo: unspaghettify
 
         if self.outer_dimension.wildcard and not wildcard_dimensions.wildcard:
             evaluate_dimensions = wildcard_dimensions.dimensions
@@ -727,11 +729,13 @@ class PolyMeasure:
             groupby_dimensions = evaluate_dimensions if allow_grouping else []
 
         # null queries have well defined inner measures but they do not have a select statement from them..
-        is_null_query = (wildcard_dimensions.dimensions is None and not wildcard_dimensions.rowset) and (
-            self.outer_dimension.wildcard and not self.outer_dimension.rowset)
+
+        # is_null_query = (wildcard_dimensions.dimensions is None and not wildcard_dimensions.rowset) and (
+        #     self.outer_dimension.wildcard and not self.outer_dimension.rowset)
+        is_null_query = wildcard_dimensions.check_null() and self.outer_dimension.check_null()
 
         # Treat this query as a source query, do not alias the final from statement
-        evaluate_as_source = self._check_primitive(evaluate_inner) or is_null_query
+        evaluate_as_source = self._check_primitive(evaluate_inner)
 
         # filter these where statements using include/exclude and dimensionality
         # These where statements are given to outer and inner measures
@@ -742,10 +746,13 @@ class PolyMeasure:
                 self.include, self.exclude
             )
         ] + self.where
+        outer_where_expressions = self.outer_where
 
         # Fix any flexible filter expressions with the current view_alias as a fixed outer_alias (above)
         # fix_outer knows to leave the filter alone if there is only one parameter available.
         passthrough_where = [filter_expression.fix_outer(view_alias) for filter_expression in passthrough_where]
+        outer_where_expressions = [
+            filter_expression.fix_outer(view_alias) for filter_expression in outer_where_expressions]
 
         # If the expression source matches the inner expression, only include matching lineages
         passthrough_where = [
@@ -761,6 +768,8 @@ class PolyMeasure:
                 )
             )
         ]
+
+        outer_where_expressions = outer_where_expressions + passthrough_where
 
         # Calculate the dimensional join objects to be supplied to sub measures
         # This is done inside _evaluate, rather than _generate_primitive_sql, as only one group by is performed no matter
@@ -780,11 +789,12 @@ class PolyMeasure:
             outer_primitive_expressions = self._get_primitive_expression(
                 inner_alias=view_name,
                 override_name=override_name
-                # , update_columns=update_columns
+                , update_columns=update_columns
             )
         else:
+            # todo: investigate replacing self.outer here
             outer_primitive_expressions = self._get_primitive_sql_list(
-                passthrough_where + dimensional_where,
+                outer_where_expressions + dimensional_where,
                 depth,
                 breadth,
                 self.inner,
@@ -795,20 +805,21 @@ class PolyMeasure:
 
         if evaluate_as_source:
             evaluate_inner_string = evaluate_inner
-            with_expression = ''
         else:
             evaluate_inner_string = evaluate_inner._evaluate(
                 passthrough_where, 0, breadth + 1,
                 None, None, aliased=False
             )
-            with_expression = f"with {view_name} as ({evaluate_inner_string})"
 
-        select_expression = make_statement('select', groupby_dimensions + outer_primitive_expressions)
-
-        if evaluate_as_source:
+        # if not self.primitive or evaluate_as_source:
+        if evaluate_as_source or (is_null_query and not self.primitive):
+            with_expression = ''
             from_expression = f"from {evaluate_inner_string} {view_alias}"
         else:
+            with_expression = f"with {view_name} as ({evaluate_inner_string})"
             from_expression = f"from {view_name} {view_alias}"
+
+        select_expression = make_statement('select', groupby_dimensions + outer_primitive_expressions)
 
         # evaluate where and dimensional where are treated the same, any of them could be dimensional joins, so:
 
@@ -838,10 +849,9 @@ class PolyMeasure:
 
         else:
             # the from clause can be supressed, especially if a dynamic outer measure is used
-            if evaluate_inner is None or self.suppress_from or is_null_query:
+            if evaluate_inner is None or self.suppress_from or (is_null_query and not self.primitive):
                 post_select = ''
             else:
-
                 post_select = f"""{from_expression} {where_expression} {groupby_expression}
     {having_expression} {orderby_expression} {postfix_expression}"""
 
@@ -901,7 +911,9 @@ class PolyMeasure:
             # else:
             #     use_alias = True
 
-            if measure.primitive and (len(measure.outer) == 1) or not measure.source:
+            # if measure.primitive and (len(measure.outer) == 1) or not measure.source:
+            # todo: don't count measures.. there must be a flag or property to hook into here...
+            if measure.primitive and (len(measure.outer) == 1):
 
                 # The recursion now has a primitive measure which can be evaluated directly.
                 # Lock the passthrough wheres to the current original alias - this is the right place to do it
@@ -928,7 +940,7 @@ class PolyMeasure:
 
 
             else:
-
+                pass
                 primitive_sql_list = primitive_sql_list + measure._get_primitive_sql_list(
                     # This is a non-primitive measure that has no opportunity to evaluate its
                     # own where clauses, so they are appended here.
@@ -958,26 +970,3 @@ class PolyMeasure:
 
         return primitive_sql_names
 
-
-def bound_objects(source):
-    class BoundMeasure(PolyMeasure):
-
-        def __init__(
-                self,
-                name=None, outer=None, dim=None, inner=None,
-                where=None, having=None, order_by=None, postfix=None,
-                include=None, exclude=None, join_nulls=True, acquire_dimensions=False,
-                redirect=None, suppress_from=False
-        ):
-            super().__init__(
-                name=name, outer=outer, dim=dim, inner=source, where=where, having=having,
-                order_by=order_by, postfix=postfix, include=include, exclude=exclude, join_nulls=join_nulls,
-                acquire_dimensions=acquire_dimensions, redirect=redirect, suppress_from=suppress_from
-            )
-
-    class BoundFilter(FilterExpression):
-
-        def __init__(self, expression, lineage=None, group_lineage=None):
-            super().__init__(expression, lineage=lineage, source=source, group_lineage=group_lineage)
-
-    return BoundMeasure, BoundFilter
