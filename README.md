@@ -118,7 +118,7 @@ measure4 = M(
 )
 ```
 
-For more detailed implementation examples (bu
+For a more detailed implementation see [test](demo/test.py).
 
 > [!WARNING]
 > Work In Progress, some of the below is not relevant now..
