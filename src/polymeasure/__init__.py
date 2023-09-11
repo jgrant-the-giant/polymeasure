@@ -3,4 +3,5 @@ from polymeasure.core import (
     FilterExpression,
     Dimension, Rowset
 )
-from polymeasure.standard import bound_objects
+from polymeasure.standard import bound_objects as bound_experimental
+from polymeasure.core import bound_objects

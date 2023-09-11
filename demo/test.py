@@ -1,4 +1,4 @@
-from polymeasure import PolyMeasure as M, bound_objects, FilterExpression, Rowset
+from polymeasure import PolyMeasure as M, bound_experimental as bound_objects, FilterExpression, Rowset
 
 import duckdb as ddb
 from itertools import chain

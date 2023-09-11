@@ -970,3 +970,26 @@ class PolyMeasure:
 
         return primitive_sql_names
 
+
+def bound_objects(source):
+    class BoundMeasure(PolyMeasure):
+
+        def __init__(
+                self,
+                name=None, outer=None, dim=None, inner=None,
+                where=None, having=None, order_by=None, postfix=None,
+                include=None, exclude=None, join_nulls=True, acquire_dimensions=False,
+                redirect=None, suppress_from=False, outer_where=None
+        ):
+            super().__init__(
+                name=name, outer=outer, dim=dim, inner=source, where=where, having=having,
+                order_by=order_by, postfix=postfix, include=include, exclude=exclude, join_nulls=join_nulls,
+                acquire_dimensions=acquire_dimensions, redirect=redirect, suppress_from=suppress_from, outer_where=outer_where
+            )
+
+    class BoundFilter(FilterExpression):
+
+        def __init__(self, expression, lineage=None, group_lineage=None):
+            super().__init__(expression, lineage=lineage, source=source, group_lineage=group_lineage)
+
+    return BoundMeasure, BoundFilter

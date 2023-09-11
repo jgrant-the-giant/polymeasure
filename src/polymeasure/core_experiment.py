@@ -797,7 +797,7 @@ class PolyMeasure:
         # Filter incoming where expressions using self.include / exclude properties,
         # pass these to the new MeasureContext
 
-        filter_where = [
+        filtered_where = [
 
         ]
 
