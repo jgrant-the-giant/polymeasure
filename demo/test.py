@@ -51,19 +51,20 @@ spectral_class = MCore(
 # We have to specify the data type like peasants - schema integration is going to have to wait
 compile_column(spectral_class, 'varchar')
 
-# Some results might be better
+# Sample some rows and columns
 some_results = to_df(
     MCore(
-        dim=Rowset(['st_spectype', 'spec_class_group'] + list(description.column_name.values[:10])),
+        dim=Rowset(['st_spectype', 'spec_class_group'] + list(description.column_name.values[:30])),
         postfix="using sample 50"
     )
 )
 
 # Normal analysis calls for grouping by dimensions and applying calculations
+# LibCore has usual suspects with a twist, like count distinct over many dimensions:
 discovery_subtypes = LibCore.count_distinct(['discoverymethod', 'disc_locale'])
 total_co_discovered = (
     LibCore.size
-    .add_where("disc_facility = 'Multiple Observatories'")
+    .add_where("disc_facility in ('Multiple Observatories', 'Multiple Facilities')")
     .rename('total_co_discovered')
 )
 discoveries_by_year = to_df(MCore(
