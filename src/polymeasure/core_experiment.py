@@ -240,7 +240,7 @@ class Rows(Dimension):
 
 class EvaluateContext:
 
-    def __init__(self, input_where, prior_context=None):
+    def __init__(self, input_where, prior_context=None, is_outer=False):
         """
         :param input_where: List of FilterExpression objects being passed into the context
         :param prior_context: Optional connection to the previous evaluation context
@@ -280,31 +280,36 @@ class EvaluateContext:
         # The prior context yields the following information:
         """
         1) The incoming / existing where filters including free filters
-        2) A hierarchy of sub queries and their corresponding EvaluateContexts
+        2) A hierarchy of sub queries and their corresponding EvaluateContexts, together with the depth
+        3) A flag indicating whether or not the context is being evaluated as an outer measure
         """
+
+        self.is_outer: bool = is_outer
 
         # Start with context containing only the incoming evaluation filters
         # For record keeping - the initial context
         self.input_where: List[FilterExpression] = input_where
-        # Actual list of filter expressions to be passed to other contexts on evaluation
-        self.where: List[FilterExpression] = []
 
+        # Actual list of filter expressions to be passed to other contexts on evaluation
+        self.where: List[FilterExpression] = self.input_where.copy()
+
+        # Connection to the previous context
         self.prior_context: Union[None, PolyMeasure] = prior_context
 
-        # The context will process into one of two distinct types:
+        # Any context can have zero or more auxiliary contexts associated with FilterExpressions
+        self.auxiliary: List[EvaluateContext] = []
+
+        # This context will be processed into one of two distinct types:
 
         # 1) a primitive context just containing a single primitive outer measure with no grouping
-        self.outer_primitive: Union[None, str, FunctionType] = None
+        self.outer_primitive: Union[None, str] = None
 
         # 2) a complex context containing zero or more outer contexts and zero or more dimensions
         self.outer_contexts: List[EvaluateContext] = []
         self.dim: Dimension = Dimension()
 
-        # In both cases there are zero or more auxiliary contexts
-        self.auxiliary: List[EvaluateContext] = []
-
         # When dim exists you can apply outer where expressions
-        self.outer_where: List[FilterExpression]
+        self.outer_where: List[FilterExpression] = []
 
         # The context tracks inner and source objects:
         self.inner: Union[PolyMeasure, None] = None
@@ -730,10 +735,8 @@ class PolyMeasure:
         elif isinstance(measure_object, (tuple, list)) and len(measure_object) > 0:
             if len(measure_object) == 1:
                 measure = PolyMeasure(None, measure_object[0])
-            elif len(measure_object) == 2:
-                measure = PolyMeasure(measure_object[0], measure_object[1])
             else:
-                measure = PolyMeasure(measure_object[0], measure_object[1], measure_object[2])
+                measure = PolyMeasure(measure_object[0], measure_object[1])
             return measure
         else:
             # There's no way to form a query so raise an error
@@ -794,17 +797,11 @@ class PolyMeasure:
         :return: EvaluateContext
         """
 
-        # Filter incoming where expressions using self.include / exclude properties,
-        # pass these to the new MeasureContext
 
-        filtered_where = [
-
-        ]
-
-        # Pass clones of this context to any auxiliary measures provided by the filters, and evaluate
+        # 1) Pass clones of this context to any auxiliary measures provided by the filters, and evaluate
         for expression in self.where:
             pass
-            # a primitive context needs to be created for any new auxiliary objects
+            # An evaluate context needs to be created for any new auxiliary objects
 
             # Evaluate and attach M.where, including auxiliary where objects
 
@@ -812,6 +809,11 @@ class PolyMeasure:
             # List of new common table expressions (Auxiliary measures that are newly evaluated)
 
 
+        # Filter incoming where expressions using self.include / exclude properties
+        # To access the current outgoing where filters for the context use context.where
+        filtered_where = [
+            ex.test_keep_filter(self.include, self.exclude) for ex in context.where
+        ]
 
         # If there is an inner measure evaluate and promote to source
 
