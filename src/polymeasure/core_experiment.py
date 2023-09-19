@@ -95,8 +95,11 @@ class FilterExpression:
         # At the moment lineage is a set of column names targeted by the expression.
         # In the future, column name + source + database directory would give more information
         # about which joins can be inferred for other measures
+        # For example two views that stem from the same family of dimensions would automatically
+        # recognise each other's shared dimensions.
+        # But fundamentally, we still check against a list of identifiers
         self.lineage = make_as_list(lineage)
-        self.auxiliary = make_as_list(auxiliary)
+        self.auxiliary: List[PolyMeasure] = make_as_list(auxiliary)
         self.source = source
         self.source_name = source if isinstance(source, str) else source.name
         self.evaluation_contexts = []
@@ -190,7 +193,6 @@ class Dimension:
 
         if self.star:
             self.rowset = True
-
 
 
     def check_null(self):
@@ -313,6 +315,7 @@ class EvaluateContext:
 
         # The context tracks inner and source objects:
         self.inner: Union[PolyMeasure, None] = None
+        self.inner_context: Union[PolyMeasure, None] = None
         self.source: Union[str, None] = None
 
         # Name and postfix modifiers
@@ -797,17 +800,33 @@ class PolyMeasure:
         :return: EvaluateContext
         """
 
-
         # 1) Pass clones of this context to any auxiliary measures provided by the filters, and evaluate
-        for expression in self.where:
-            pass
-            # An evaluate context needs to be created for any new auxiliary objects
+        for measure_expression in self.where:
+
+            expression = copy(measure_expression)
+
+            for aux_measure in expression.auxiliary:
+                # An evaluate context needs to be created for any new auxiliary objects
+                aux_context = EvaluateContext(context.where, context)
+                # aux_context.process(measure), the other way around, looks more reasonable here
+                # But I can't keep passing ownership of the process between these two objects :D
+                aux_context = aux_measure.process_context(aux_context)
+                expression.evaluation_contexts.append(aux_context)
 
             # Evaluate and attach M.where, including auxiliary where objects
-
+            context.where.append(expression)
 
             # List of new common table expressions (Auxiliary measures that are newly evaluated)
+            context.auxiliary.extend(expression.evaluation_contexts)
 
+        # Evaluate inner measures if required, and identify or update inner / source
+        if self.complex:
+            inner_context = EvaluateContext(context.where, context)
+            inner_context = self.inner.process_context(inner_context)
+            context.inner = self.inner
+            context.inner_context = inner_context
+        elif self.source:
+            context.source = self.source
 
         # Filter incoming where expressions using self.include / exclude properties
         # To access the current outgoing where filters for the context use context.where
@@ -815,16 +834,20 @@ class PolyMeasure:
             ex.test_keep_filter(self.include, self.exclude) for ex in context.where
         ]
 
-        # If there is an inner measure evaluate and promote to source
 
 
         # Determine dimensionality from self.dim and source evaluate dimensions if needed
         # If grouping: flag groupby or raise alert if there's already a grouping operation
-        # When grouping begins, migrate primitive stack to grouping_stack
 
 
+        # If self.outer > 1:
         # Pass a clone of the context to each outer measure for processing
         # Then merge the outer primitive stacks together
+
+        # If self.primitive:
+        # If len(dim) > 0, or rowset granularity over a different view, then
+        # create a new outer_context containing the outer_primitive
+        # Otherwise create a no_alias evaluate context (which could just be a string)
 
         # Create the evaluation SQL text before returning
 
