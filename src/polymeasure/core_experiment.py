@@ -589,22 +589,9 @@ class PolyMeasure:
         (nearest dimension- defined) parent, or [] if that is not defined.
         """
 
-        self.primitive = self._check_primitive(outer)
-
-        if inner is None:
-            # Free measure
-            self.free = True
-            self.source = False
-        elif self._check_primitive(inner):
-            # The inner query is a source - just a string or string evaluable that can be directly compared
-            # and must be unique to the sql schema.
-            self.free = False
-            self.source = True
-        elif isinstance(inner, PolyMeasure):
-            self.free = False
-            self.source = False
-        else:
-            raise Exception
+        self.primitive = return_if_elemental(outer)
+        self.source = return_if_elemental(inner)
+        self.free = (self.source is not None)
 
         self.inner = inner
 
@@ -621,7 +608,6 @@ class PolyMeasure:
         # Create where FilterExpression objects
         self.where = self._process_where_argument(where)
         self.outer_where = self._process_where_argument(outer_where)
-
 
         if self.primitive:
             self.outer = make_as_list(outer, filter_out_null=True)
@@ -834,10 +820,11 @@ class PolyMeasure:
             ex.test_keep_filter(self.include, self.exclude) for ex in context.where
         ]
 
+        if not context.dim and self.dim:
+            context.dim = self.dim
 
-
-        # Determine dimensionality from self.dim and source evaluate dimensions if needed
-        # If grouping: flag groupby or raise alert if there's already a grouping operation
+        # Determine dimensionality from source evaluate dimensions if needed
+        # If grouping: flag group by or raise alert if there's already a grouping operation
 
 
         # If self.outer > 1:
