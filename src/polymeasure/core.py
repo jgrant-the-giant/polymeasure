@@ -906,10 +906,15 @@ class PolyMeasure:
 
         for measure in self.outer:
 
-            # if measure.primitive or (not measure.free and self.source):
+            # This block here officer *points*
+            # if wildcard_dimensions.rowset and (
+            #     measure.free or measure.outer_dimension.rowset and measure.inner == wildcard_inner
+            # ):
             #     use_alias = False
+            #     no_select = True
             # else:
             #     use_alias = True
+            #     no_select = False
 
             # if measure.primitive and (len(measure.outer) == 1) or not measure.source:
             # todo: don't count measures.. there must be a flag or property to hook into here...
@@ -923,7 +928,9 @@ class PolyMeasure:
                 ]
 
                 # if measure.free and measure.outer_dimension.wildcard and self.outer_dimension.rowset:
-                if measure.free and wildcard_inner is None:
+                if measure.free and wildcard_inner is None or wildcard_dimensions.rowset and (
+                    measure.free or measure.outer_dimension.rowset and measure.inner == wildcard_inner
+                ):
                     # Generated when a rowset query doesn't need a subquery expression
                     primitive_sql_list = primitive_sql_list + measure._get_primitive_expression(
                         inner_alias=original_alias, override_name=override_name, update_columns=update_columns)
