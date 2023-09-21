@@ -121,7 +121,7 @@ For a more detailed implementation see [test](demo/test.py).
 > [!WARNING]
 > Work In Progress, some of the below is not relevant now..
 
-## How it works
+## How it builds sql
 
 In pseudo-sql, `M( Inner * Dim; Outer; Where )` evaluates as:
 
@@ -147,4 +147,3 @@ There is a simpler presentation when Dim = Rowset(G):
   
   from __VIEW__
   where Where
-```
