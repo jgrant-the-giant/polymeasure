@@ -142,7 +142,7 @@ class Dimension:
     The star keyword argument should be a single string star expression
     """
 
-    def __init__(self, dimensions=None, rowset=False, star=None):
+    def __init__(self, dimensions=None, rowset=False, star=None, rollup=None):
         """
         Represents a set of dimensions to group an inner query.
         Can be any granularity from [] to infinity, or None which defaults to the parent measures dimensions.

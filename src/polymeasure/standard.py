@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from typing import Type
 
 from .core import PolyMeasure as M, FilterExpression, Rowset
 
@@ -167,6 +168,7 @@ def double_outer(second_outer, first_outer, inner):
 
 
 def bound_objects(source):
+
     class BoundMeasure(M):
 
         def __init__(
@@ -182,19 +184,56 @@ def bound_objects(source):
                 acquire_dimensions=acquire_dimensions, redirect=redirect, suppress_from=suppress_from, outer_where=outer_where
             )
 
+    class BoundFilter(FilterExpression):
+
+        def __init__(self, expression, lineage=None, group_lineage=None):
+            super().__init__(expression, lineage=lineage, source=source, group_lineage=group_lineage)
+
     class BoundLibrary:
         """
         Collection of standard measures and measure functions keyed to a specific inner source
         """
-        count_all = M('countall', outer='count(*)', dim=[], include=[])
-        size = M('size', outer='count(*)')
 
         def __init__(self, source):
             self.source = source
 
-        # There should be a smarter way to declare this once..
-        def count(self, col):
-            return M(f'count_{col}', f"count({col})", inner=self.source)
+            # Bound Measure
+            self.M: Type[BoundMeasure] = BoundMeasure
+            self.W: Type[BoundFilter] = BoundFilter
+
+            # Bound Filter
+
+            # Static Measures
+            self.size = M(f'size', f"count(*)", inner=self.source)
+            self.count_all = M('countall', outer='count(*)', dim=[], include=[], inner=self.source)
+
+        def op(self, operator, column):
+            """
+            Operator primitive - calls an operator on the specified column.
+            :param operator: SQL primitive operator
+            :param column: column name
+            :return: primitive polymeasure
+            """
+            return M(f'{operator}_{column}', f"{operator}({column})", inner=self.source)
+
+        # There should be a smarter way to declare this once
+        def count_nonnull(self, column):
+            return self.op('count', column)
+
+        def sum(self, column):
+            return self.op('sum', column)
+
+        def mean(self, column):
+            return self.op('mean', column)
+
+        def var(self, column):
+            return self.op('var_pop', column)
+
+        def min(self, column):
+            return self.op('min', column)
+
+        def max(self, column):
+            return self.op('max', column)
 
         @staticmethod
         def constant(self, c):
@@ -352,10 +391,4 @@ def bound_objects(source):
 
             return evaluate_double_outer
 
-    class BoundFilter(FilterExpression):
-
-        def __init__(self, expression, lineage=None, group_lineage=None):
-            super().__init__(expression, lineage=lineage, source=source, group_lineage=group_lineage)
-
-    return BoundMeasure, BoundLibrary(source), BoundFilter
-
+    return BoundLibrary(source=source)
