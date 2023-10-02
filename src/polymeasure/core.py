@@ -18,7 +18,7 @@ def make_as_list(maybe_vector, filter_out_null=True, keep_none=False):
     return [x for x in maybe_null_vector if x is not None or not filter_out_null]
 
 
-def make_statement(prefix, elements, separator=', \n', brackets=False, if_blank=''):
+def make_statement(prefix, elements, separator=', \n', brackets=False, if_blank='', enquote_strings=False):
     """
     Returns a string expression like "prefix a1, a2, a3" with optional prefix, optional brackets, etc
     Args:
@@ -33,6 +33,16 @@ def make_statement(prefix, elements, separator=', \n', brackets=False, if_blank=
 
     elements = make_as_list(elements)
     elements = [e for e in elements if e is not None]
+
+    def enquote(term):
+        if isinstance(term, str):
+            return f"'{str}'"
+        else:
+            return term
+
+    if enquote_strings:
+        elements = [enquote(e) for e in elements]
+
     if len(elements) == 0:
         return if_blank
 
@@ -168,6 +178,14 @@ class Dimension:
             self.wildcard = True
         else:
             self.wildcard = False
+
+        self.rollup = rollup
+
+    def expression(self):
+        if self.rollup:
+            return f"{self.rollup} {make_statement('', self.dimensions, brackets=True)}"
+        else:
+            return make_statement('', self.dimensions)
 
     def check_null(self):
         return (self.dimensions is None or len(self.dimensions) == 0) and not self.rowset
@@ -379,7 +397,7 @@ class PolyMeasure:
             inner=None,
             where=None, having=None, order_by=None, postfix=None,
             include=None, exclude=None, join_nulls=True,
-            acquire_dimensions=False, redirect=None,
+            acquire_dimensions=False, redirect=None, redirect_map=None,
             suppress_from=False, outer_where=None
     ):
         """
@@ -553,7 +571,8 @@ class PolyMeasure:
         self.exclude = make_as_list(exclude)
         self.join_nulls = join_nulls
         self.acquire_dimensions = acquire_dimensions
-        self.redirect = redirect
+        self.redirect = make_as_list(redirect) + make_as_list(inner)
+        self.redirect_map = redirect_map if redirect_map else dict()
         self.suppress_from = suppress_from
 
         """     
@@ -593,7 +612,6 @@ class PolyMeasure:
         # Create where FilterExpression objects (now that self.inner is defined)
         self.where = self._process_where_argument(where)
         self.outer_where = self._process_where_argument(outer_where)
-
 
         if self.primitive:
             self.outer = make_as_list(outer, filter_out_null=True)
@@ -704,18 +722,18 @@ class PolyMeasure:
         # todo: unspaghettify
 
         if self.outer_dimension.wildcard and not wildcard_dimensions.wildcard:
-            evaluate_dimensions = wildcard_dimensions.dimensions
+            evaluate_dimensions = wildcard_dimensions
         elif self.outer_dimension.rowset and self.outer_dimension.dimensions is None:
-            evaluate_dimensions = backup_rowset_dimension
+            evaluate_dimensions = Dimension(backup_rowset_dimension)
         else:
             evaluate_dimensions = (
-                self.outer_dimension.dimensions
+                self.outer_dimension
                 if not self.outer_dimension.wildcard
-                else wildcard_dimensions.dimensions
+                else wildcard_dimensions
             )
 
         # If evaluate_dimensions is None, swap to [] now
-        evaluate_dimensions = [] if evaluate_dimensions is None else evaluate_dimensions
+        # evaluate_dimensions = [] if evaluate_dimensions is None else evaluate_dimensions
 
         # And there's a second trick with the dimensions - they don't need to be applied as filters
         # unless they are joining. Hence a second (!) set of dimensions which cut
@@ -725,8 +743,10 @@ class PolyMeasure:
         star_expression = self.outer_dimension.star
         if star_expression is not None and star_expression:
             groupby_dimensions = [star_expression]
+            groupby_terms = ""
         else:
-            groupby_dimensions = evaluate_dimensions if allow_grouping else []
+            groupby_dimensions = evaluate_dimensions.dimensions if allow_grouping else []
+            groupby_terms = evaluate_dimensions.expression()
 
         # null queries have well defined inner measures but they do not have a select statement from them..
 
@@ -750,14 +770,16 @@ class PolyMeasure:
 
         # Fix any flexible filter expressions with the current view_alias as a fixed outer_alias (above)
         # fix_outer knows to leave the filter alone if there is only one parameter available.
-        passthrough_where = [filter_expression.fix_outer(view_alias) for filter_expression in passthrough_where]
+
+
+        passthrough_where = [filter_expression.fix_outer(view_name) for filter_expression in passthrough_where]
         outer_where_expressions = [
-            filter_expression.fix_outer(view_alias) for filter_expression in outer_where_expressions]
+            filter_expression.fix_outer(view_name) for filter_expression in outer_where_expressions]
 
         # If the expression source matches the inner expression, only include matching lineages
         passthrough_where = [
             expression for expression in passthrough_where
-            if expression.source != self.inner or bool(set(expression.lineage) & set(evaluate_dimensions))
+            if expression.source != self.inner or bool(set(expression.lineage) & set(evaluate_dimensions.dimensions))
         ]
 
         # Finally, only actually evaluate these filters if their inner statements are matched
@@ -778,7 +800,7 @@ class PolyMeasure:
 
         dimensional_where = [
             self.dimensional_join_primitive(column, view_alias, evaluate_redirect_inner, self.join_nulls)
-            for column in evaluate_dimensions
+            for column in evaluate_dimensions.dimensions
         ]
 
         # Build the primitive SQL select expression
@@ -812,12 +834,16 @@ class PolyMeasure:
             )
 
         # if not self.primitive or evaluate_as_source:
-        if evaluate_as_source or (is_null_query and not self.primitive):
+        if evaluate_as_source or (is_null_query and not self.primitive and self.source):
             with_expression = ''
             from_expression = f"from {evaluate_inner_string} {view_alias}"
         else:
             with_expression = f"with {view_name} as ({evaluate_inner_string})"
             from_expression = f"from {view_name} {view_alias}"
+
+        # todo: remove testing flag
+        # with_expression = f"with {view_name} as ({evaluate_inner_string})"
+        # from_expression = f"from {view_name} {view_alias}"
 
         select_expression = make_statement('select', groupby_dimensions + outer_primitive_expressions)
 
@@ -830,8 +856,8 @@ class PolyMeasure:
             process_where_filter(filter_object) for filter_object in evaluate_where]
         where_expression = make_statement('where', evaluate_where_expressions, separator='and \n')
 
-        if len(evaluate_dimensions) > 0 and not self.outer_dimension.rowset:
-            groupby_expression = make_statement('group by', groupby_dimensions)
+        if len(evaluate_dimensions.dimensions) > 0 and not self.outer_dimension.rowset:
+            groupby_expression = make_statement('group by', groupby_terms)
             having_expression = make_statement('having', self.having)
         else:
             groupby_expression = ''
@@ -986,12 +1012,12 @@ def bound_objects(source):
                 name=None, outer=None, dim=None, inner=None,
                 where=None, having=None, order_by=None, postfix=None,
                 include=None, exclude=None, join_nulls=True, acquire_dimensions=False,
-                redirect=None, suppress_from=False, outer_where=None
+                redirect=None, redirect_map=None, suppress_from=False, outer_where=None
         ):
             super().__init__(
                 name=name, outer=outer, dim=dim, inner=source, where=where, having=having,
                 order_by=order_by, postfix=postfix, include=include, exclude=exclude, join_nulls=join_nulls,
-                acquire_dimensions=acquire_dimensions, redirect=redirect, suppress_from=suppress_from, outer_where=outer_where
+                acquire_dimensions=acquire_dimensions, redirect=redirect, redirect_map=redirect_map, suppress_from=suppress_from, outer_where=outer_where
             )
 
     class BoundFilter(FilterExpression):

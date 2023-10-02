@@ -6,7 +6,7 @@ from copy import copy
 import sqlparse
 
 
-def make_as_list(maybe_vector: Any, filter_out_null=True, keep_none=False):
+def make_as_list(maybe_vector, filter_out_null=True, keep_none=False):
     if maybe_vector is None and not keep_none:
         maybe_null_vector = []
     elif maybe_vector is None and keep_none:
@@ -20,7 +20,7 @@ def make_as_list(maybe_vector: Any, filter_out_null=True, keep_none=False):
     return [x for x in maybe_null_vector if x is not None or not filter_out_null]
 
 
-def make_statement(prefix, elements, separator=', \n', brackets=False, if_blank=''):
+def make_statement(prefix, elements, separator=', \n', brackets=False, if_blank='', enquote_strings=False):
     """
     Returns a string expression like "prefix a1, a2, a3" with optional prefix, optional brackets, etc
     Args:
@@ -35,13 +35,22 @@ def make_statement(prefix, elements, separator=', \n', brackets=False, if_blank=
 
     elements = make_as_list(elements)
     elements = [e for e in elements if e is not None]
+
+    def enquote(term):
+        if isinstance(term, str):
+            return f"'{str}'"
+        else:
+            return term
+
+    if enquote_strings:
+        elements = [enquote(e) for e in elements]
+
     if len(elements) == 0:
         return if_blank
 
     encapsulator = ('(', ')') if brackets else ('', '')
     prefix_snippet = '' if prefix is None or len(prefix) == 0 else f"{prefix} "
     return f"""{encapsulator[0]}{prefix_snippet}{separator.join(elements)}{encapsulator[1]}"""
-
 
 def return_if_elemental(measure_object):
     if isinstance(measure_object, str):
@@ -160,12 +169,11 @@ class FilterExpression:
 
 class Dimension:
     """
-    Rows is a special dimension which returns (*) from the view.
-    Rows measures should be row context primitive expressions.
+    Rowset is a special dimension which returns (*) from the view.
     The star keyword argument should be a single string star expression
     """
 
-    def __init__(self, dimensions=None, rowset=False, star=None):
+    def __init__(self, dimensions=None, rowset=False, star=None, rollup=None):
         """
         Represents a set of dimensions to group an inner query.
         Can be any granularity from [] to infinity, or None which defaults to the parent measures dimensions.
@@ -177,23 +185,28 @@ class Dimension:
         self.dimensions = make_as_list(dimensions, keep_none=True)
         self.rowset = rowset
 
-        # Wildcard dimensions take on
-        if dimensions is None and not rowset:
-            self.wildcard = True
-        else:
-            self.wildcard = False
-
         if star == True:
             # default to star
             self.star = "*"
-        elif star is None:
-            self.star = False
         else:
             self.star = star
 
         if self.star:
             self.rowset = True
 
+        # if self.dimensions is None and self.rowset is False:
+        if self.dimensions is None:
+            self.wildcard = True
+        else:
+            self.wildcard = False
+
+        self.rollup = rollup
+
+    def expression(self):
+        if self.rollup:
+            return f"{self.rollup} {make_statement('', self.dimensions, brackets=True)}"
+        else:
+            return make_statement('', self.dimensions)
 
     def check_null(self):
         return (self.dimensions is None or len(self.dimensions) == 0) and not self.rowset
@@ -310,6 +323,12 @@ class EvaluateContext:
         self.outer_contexts: List[EvaluateContext] = []
         self.dim: Dimension = Dimension()
 
+        # Outer contexts can provide additional dimensional lineage
+        # We also factor in redirection of columns onto other views here
+        # (i.e max(date) can be identified with the date column)
+        # The grouping dimension plus outer lineage guides other measures that use this as an inner query
+        self.relational_dimension: dict = dict()
+
         # When dim exists you can apply outer where expressions
         self.outer_where: List[FilterExpression] = []
 
@@ -325,8 +344,7 @@ class EvaluateContext:
         self.postfix = None
 
 
-
-    def evaluate(self, update_columns=False):
+    def evaluate(self, update_columns=False, evaluate_type='normal'):
         """
         Returns a SQL string for the entire context (aux -> group + evaluations | primitive)
         :return: SQL String
@@ -820,8 +838,15 @@ class PolyMeasure:
             ex.test_keep_filter(self.include, self.exclude) for ex in context.where
         ]
 
-        if not context.dim and self.dim:
-            context.dim = self.dim
+        if not context.dim:
+            if self.dim:
+                context.dim = self.dim
+                # This is the time to generate dimensional join filters
+                # In the case that context.dim is rowset-star we need to collect all available dimensions
+        else:
+            if self.dim:
+                print("Attempting to redefine dimension")
+
 
         # Determine dimensionality from source evaluate dimensions if needed
         # If grouping: flag group by or raise alert if there's already a grouping operation

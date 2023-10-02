@@ -167,7 +167,9 @@ def double_outer(second_outer, first_outer, inner):
     return evaluate_double_outer
 
 
-def bound_objects(source):
+def bound_objects(source, redirect=None):
+
+    redirect_source_list = redirect
 
     class BoundMeasure(M):
 
@@ -181,7 +183,7 @@ def bound_objects(source):
             super().__init__(
                 name=name, outer=outer, dim=dim, inner=source, where=where, having=having,
                 order_by=order_by, postfix=postfix, include=include, exclude=exclude, join_nulls=join_nulls,
-                acquire_dimensions=acquire_dimensions, redirect=redirect, suppress_from=suppress_from, outer_where=outer_where
+                acquire_dimensions=acquire_dimensions, redirect=redirect_source_list, suppress_from=suppress_from, outer_where=outer_where
             )
 
     class BoundFilter(FilterExpression):
@@ -194,8 +196,7 @@ def bound_objects(source):
         Collection of standard measures and measure functions keyed to a specific inner source
         """
 
-        def __init__(self, source):
-            self.source = source
+        def __init__(self):
 
             # Bound Measure
             self.M: Type[BoundMeasure] = BoundMeasure
@@ -204,8 +205,8 @@ def bound_objects(source):
             # Bound Filter
 
             # Static Measures
-            self.size = M(f'size', f"count(*)", inner=self.source)
-            self.count_all = M('countall', outer='count(*)', dim=[], include=[], inner=self.source)
+            self.size = self.M(f'size', f"count(*)")
+            self.count_all = self.M('countall', outer='count(*)', dim=[], include=[])
 
         def op(self, operator, column):
             """
@@ -214,9 +215,8 @@ def bound_objects(source):
             :param column: column name
             :return: primitive polymeasure
             """
-            return M(f'{operator}_{column}', f"{operator}({column})", inner=self.source)
+            return self.M(f'{operator}_{column}', f"{operator}({column})")
 
-        # There should be a smarter way to declare this once
         def count_nonnull(self, column):
             return self.op('count', column)
 
@@ -236,7 +236,7 @@ def bound_objects(source):
             return self.op('max', column)
 
         @staticmethod
-        def constant(self, c):
+        def constant(c):
             """
                 Args:
                     c: Numeric or string literal, or object with str accessor.
@@ -247,11 +247,11 @@ def bound_objects(source):
             return M('__a_constant', c, suppress_from=True)
 
         @staticmethod
-        def combine_scalars(self, name, outer, inner_measures):
+        def combine_scalars(name, outer, inner_measures):
             return M(name, outer, inner=M(outer=inner_measures))
 
         @staticmethod
-        def dot_product(self, name, measures, weights=None):
+        def dot_product(name, measures, weights=None):
             """
                 Returns a polymeasure that represents the dot product of measures and weights.
                 https://en.wikipedia.org/wiki/Dot_product
@@ -273,7 +273,7 @@ def bound_objects(source):
             ])
 
         @staticmethod
-        def exp_dot_product(self, name, measures, weights=None):
+        def exp_dot_product(name, measures, weights=None):
             """
                 Returns a polymeasure that represents the product of the exponents of the measures by index weights.
                 Similar to a dot product, but exponentiate the terms and multiply them together.
@@ -295,7 +295,7 @@ def bound_objects(source):
             ])
 
         @staticmethod
-        def nulled_dot_product(self, name, measures, weights):
+        def nulled_dot_product(name, measures, weights):
             measures_count = len(measures)
 
             def values_clause(self, inner_alias):
@@ -339,11 +339,10 @@ def bound_objects(source):
 
             return M(
                 name, "string_agg(__the__words, ' --- ')", [],
-                M(
+                self.M(
                     'the_words',
                     [M('__the__words', string_agg, dim=columns), sort_by.rename('__string_sample_order')],
                     dim=columns,
-                    inner=self.source,
                     postfix=f"order by __string_sample_order desc limit {sample_size}"
                 )
             )
@@ -355,7 +354,7 @@ def bound_objects(source):
             return M(
                 f"count_distinct_{name_column_string}",
                 size,
-                inner=M('xyz', dim=columns, inner=self.source)
+                inner=self.M('xyz', dim=columns)
             )
 
         def double_outer(self, second_outer, first_outer):
@@ -374,11 +373,10 @@ def bound_objects(source):
 
             first_measure_name = first_outer[0].name
             first_measure_redirect = first_outer[0].inner
-            evaluate_first_outer = M(
+            evaluate_first_outer = self.M(
                 first_measure_name,
                 first_outer,
                 Rowset(star=True),
-                inner=self.source,
                 redirect=first_measure_redirect
             )
 
@@ -391,4 +389,4 @@ def bound_objects(source):
 
             return evaluate_double_outer
 
-    return BoundLibrary(source=source)
+    return BoundLibrary()

@@ -1,4 +1,5 @@
 from polymeasure import PolyMeasure as M, bound_experimental as bound_objects, FilterExpression, Rowset, Dimension
+from polymeasure.core import make_statement, make_as_list
 
 import duckdb as ddb
 from itertools import chain
