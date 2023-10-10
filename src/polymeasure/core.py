@@ -114,6 +114,12 @@ class FilterExpression:
         else:
             include_all = False
 
+        # When the inclusion list is provided explicitly,
+        # filters are accepted regardless of source if they match (0.1.6)
+        for column in self.lineage + self.group_lineage:
+            if column not in exclude and column in include:
+                return True
+
         if self.source is not None and source is not None and not source in self.source:
             return False
 
@@ -786,7 +792,7 @@ class PolyMeasure:
         evaluate_where = [
             expression for expression in passthrough_where if (
                 expression.test_keep_filter(
-                    None, [], evaluate_inner
+                    self.include, [], evaluate_inner
                 )
             )
         ]
