@@ -1,7 +1,19 @@
 from inspect import signature
 from types import FunctionType
+from typing import Type
 from copy import copy
 import sqlparse
+
+_DEFAULT_NULL = object()
+
+
+def _default_or_null(param, default):
+    if param and param is not _DEFAULT_NULL:
+        return param
+    elif param is _DEFAULT_NULL:
+        return None
+    else:
+        return default
 
 
 def make_as_list(maybe_vector, filter_out_null=True, keep_none=False):
@@ -573,7 +585,12 @@ class PolyMeasure:
         self.having = having
         self.order_by = order_by
         self.postfix = postfix
-        self.include = make_as_list(include, keep_none=True)
+
+
+        if include is _DEFAULT_NULL:
+            self.include = None
+        else:
+            self.include = make_as_list(include, keep_none=True)
         self.exclude = make_as_list(exclude)
         self.join_nulls = join_nulls
         self.acquire_dimensions = acquire_dimensions
@@ -595,6 +612,8 @@ class PolyMeasure:
         the most granular, and [] being the least. dim = None is a wildcard that assumes the dimension of the 
         (nearest dimension- defined) parent, or [] if that is not defined.
         """
+
+        inner = None if inner is _DEFAULT_NULL else inner
 
         self.primitive = self._check_primitive(outer)
         if inner is None:
@@ -655,6 +674,7 @@ class PolyMeasure:
         self.final_outer_columns = self._get_primitive_sql_names()
 
         pass
+
 
     def evaluate(
             self, where=None, pretty=False, update_columns=False):
@@ -1008,6 +1028,257 @@ class PolyMeasure:
                     primitive_sql_names = primitive_sql_names + measure._get_primitive_sql_names()
 
         return primitive_sql_names
+
+    @classmethod
+    def free_measure(
+            cls,
+            name=None,
+            outer=None,
+            dim=None,
+            inner=None,
+            where=None, having=None, order_by=None, postfix=None,
+            include=None, exclude=None, join_nulls=True,
+            acquire_dimensions=False, redirect=None,
+            suppress_from=False, outer_where=None
+    ):
+
+        inner = inner if inner else _DEFAULT_NULL
+        include = include if include else _DEFAULT_NULL
+
+        return cls(
+            name=name,
+            outer=outer,
+            dim=dim,
+            inner=inner,
+            where=where, having=having, order_by=order_by, postfix=postfix,
+            include=include, exclude=exclude, join_nulls=join_nulls,
+            acquire_dimensions=acquire_dimensions, redirect=redirect,
+            suppress_from=suppress_from, outer_where=outer_where
+        )
+
+
+    @classmethod
+    def op(cls, operator, column, name=None, include=None, where=None, **kwargs):
+        """
+        Operator primitive - calls an operator on the specified column.
+        :param operator: SQL primitive operator
+        :param column: column name
+        :param name: string name override of the operator (optional)
+        :param include: inclusion column set
+        :return: primitive polymeasure
+        """
+        measure_name = name if name else f'{operator}_{column}'
+
+        return cls(measure_name, f"{operator}({column})", include=include, where=where, **kwargs)
+
+    # I'd like a cleaner way to pass / inherit signatures here..
+    @classmethod
+    def size(cls, where=None, **kwargs):
+        return cls.op('count', '*', 'size', where=where, **kwargs)
+
+    @classmethod
+    def anon_size(cls):
+        return cls.free_measure('size', 'count(*)')
+    
+    @classmethod
+    def first(cls, column, where=None, **kwargs):
+        return cls.op('first', column, where=where, **kwargs)
+    
+    @classmethod
+    def last(cls, column, where=None, **kwargs):
+        return cls.op('last', column, where=where, **kwargs)
+    
+    # Summary statistic shorthands
+
+    @classmethod
+    def count_all(cls, where=None, **kwargs):
+        return cls.op('count', '*', 'size', where=where, **kwargs)
+
+    @classmethod
+    def count_nonnull(cls, column, where=None, **kwargs):
+        return cls.op('count', column, where=where, **kwargs)
+
+    @classmethod
+    def sum(cls, column, where=None, **kwargs):
+        return cls.op('sum', column, where=where, **kwargs)
+
+    @classmethod
+    def mean(cls, column, where=None, **kwargs):
+        return cls.op('mean', column, where=where, **kwargs)
+    
+    @classmethod
+    def median(cls, column, where=None, **kwargs):
+        return cls.op('median', column, where=where, **kwargs)
+
+    @classmethod
+    def var(cls, column, where=None, **kwargs):
+        return cls.op('var_pop', column, where=where, **kwargs)
+
+    @classmethod
+    def min(cls, column, where=None, **kwargs):
+        return cls.op('min', column, where=where, **kwargs)
+
+    @classmethod
+    def max(cls, column, where=None, **kwargs):
+        return cls.op('max', column, where=where, **kwargs)
+
+    @classmethod
+    def constant(cls, c):
+        """
+            Args:
+                c: Numeric or string literal, or object with str accessor.
+            Returns: A polymeasure which always evaluates as c.
+            """
+        if not isinstance(c, str):
+            c = str(c)
+        return cls('__a_constant', c, suppress_from=True)
+
+    @classmethod
+    def combine_scalars(cls, name, outer, inner_measures):
+        return cls.free_measure(name, outer, inner=cls.free_measure(outer=inner_measures))
+
+    @classmethod
+    def dot_product(cls, name, measures, weights=None):
+        """
+            Returns a polymeasure that represents the dot product of measures and weights.
+            https://en.wikipedia.org/wiki/Dot_product
+            :param name: Name of the measure
+            :param measures: A list of polymeasures [p1, p2 .. pN]
+            :param weights: A list of weights of equal length, [c1, c2 .. cN]
+            :return: Polymeasure representing the linear sum c1 * p1 + c2 * p2 + .. + cN * pN
+            """
+        measure_counts = len(measures)
+        if weights is not None:
+            if measure_counts != len(weights):
+                raise Exception
+            terms = [f"__input{i} * {weights[i]}" for i in range(measure_counts)]
+        else:
+            terms = [f"__input{i}" for i in range(measure_counts)]
+        linear_combination_expression = ' + \n'.join(terms)
+        return cls.combine_scalars(name, linear_combination_expression, [
+            measures[i].rename(f"__input{i}") for i in range(measure_counts)
+        ])
+
+    @classmethod
+    def exp_dot_product(cls, name, measures, weights=None):
+        """
+            Returns a polymeasure that represents the product of the exponents of the measures by index weights.
+            Similar to a dot product, but exponentiate the terms and multiply them together.
+            :param name: Name of the measure
+            :param measures: A list of polymeasures [p1, p2 .. pN]
+            :param weights: A list of weights of equal length, [c1, c2 .. cN]
+            :return: Polymeasure representing the linear sum c1 ^ p1 * c2 ^ p2 * .. * cN ^ pN
+            """
+        measure_counts = len(measures)
+        if weights is not None:
+            if measure_counts != len(weights):
+                raise Exception
+            terms = [f"__input{i} ^ {weights[i]}" for i in range(measure_counts)]
+        else:
+            terms = [f"__input{i}" for i in range(measure_counts)]
+        linear_combination_expression = ' * \n'.join(terms)
+        return cls.combine_scalars(name, linear_combination_expression, [
+            measures[i].rename(f"__input{i}") for i in range(measure_counts)
+        ])
+
+    @classmethod
+    def nulled_dot_product(cls, name, measures, weights, divide_weight=True):
+        measures_count = len(measures)
+
+        def values_clause(self, inner_alias):
+            values_terms = [f"({weights[i]}, (select __input{i} from {inner_alias}))" for i in
+                            range(measures_count)]
+            comma_newline = ', \n'
+            return f"""* from (values {comma_newline.join(values_terms)})"""
+
+        kpi_values_summary = cls.free_measure(
+            "kpis(weight, value)", values_clause,
+            inner=cls.free_measure(outer=[measures[i].rename(f"__input{i}") for i in range(measures_count)]),
+            suppress_from=True)
+
+        final_outer_expression = 'sum(weight * value) / sum(weight)' if divide_weight else 'sum(weight * value)'
+
+        kpi_polymeasure = cls.free_measure(
+            name, final_outer_expression,
+            inner=kpi_values_summary)
+        return kpi_polymeasure
+
+    @classmethod
+    def string_column_sample(cls, name, columns, sample_size=5, sort_by=None):
+        """
+            A composite measure that returns a string joined sample over multiple columns.
+            Args:
+                name: Name of the measure
+                columns: Columns to join with ", "
+                sample_size: Number of samples
+                sort_by: Measure to evaluate to sort the results
+
+            Returns: A PolyMeasure
+            """
+
+        sort_by = sort_by if sort_by else cls.anon_size()
+
+        def string_agg(self: Type[cls] = None, inner_alias=None):
+            if self is not None:
+                columns = self.outer_dimension.dimensions
+            else:
+                columns = []
+            column_string = ', '.join(columns)
+            return f"concat_ws(', ', {column_string})"
+
+        return cls.free_measure(
+            name, "string_agg(__the__words, ' --- ')", [],
+            cls(
+                'the_words',
+                [cls.free_measure('__the__words', string_agg, dim=columns), sort_by.rename('__string_sample_order')],
+                dim=columns,
+                postfix=f"order by __string_sample_order desc limit {sample_size}"
+            )
+        )
+
+    @classmethod
+    def count_distinct(cls, columns):
+        if isinstance(columns, str):
+            columns = [columns]
+        name_column_string = '_'.join(columns)
+        return cls.free_measure(
+            f"count_distinct_{name_column_string}",
+            cls.anon_size(),
+            inner=cls('xyz', dim=columns)
+        )
+
+    @classmethod
+    def double_outer(cls, second_outer, first_outer):
+        """
+            Evaluates the second_outer measure over the rowset of the first_outer measures over the inner measure.
+            Assumes the first_outer measures have the same inner measure, and the secound_outer measure is free.
+            Args:
+                second_outer: outermost free measure to evaluate over the result of M(first_outer; inner)
+                first_outer: inner measures to evaluate over inner
+
+            Returns: The polymeasure representing M(second_outer; M(first_outer; inner))
+            """
+        if not isinstance(first_outer, (tuple, list)):
+            first_outer = [first_outer]
+
+        first_measure_name = first_outer[0].name
+        first_measure_redirect = first_outer[0].inner
+        evaluate_first_outer = cls.free_measure(
+            first_measure_name,
+            first_outer,
+            Rowset(star=True),
+            redirect=first_measure_redirect
+        )
+
+        evaluate_double_outer = cls.free_measure(
+            f"double_outer",
+            second_outer,
+            [],
+            evaluate_first_outer,
+            include=_DEFAULT_NULL
+        )
+
+        return evaluate_double_outer
 
 
 def bound_objects(source):
